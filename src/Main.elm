@@ -27,38 +27,32 @@ main =
 
 type alias Model =
     { pattern : String
-    , regex : Regex
-    , status : Status
-    , corpus : Maybe (List String)
+    , regex : Maybe Regex
+    , corpus : Corpus
     , matches : List String
     }
 
 
-type Status
-    = AllClear
-    | RegexError
-    | CorpusLoadError
+type Corpus
+    = Loaded (List String)
+    | Awaiting
+    | Failed
 
 
 
 -- INIT
 
 
-corpus =
-    String.split " " "apple banana cherry durian eggplant fig green-bean"
-
-
 init : () -> ( Model, Cmd Msg )
 init _ =
     ( { pattern = ""
-      , regex = Regex.never
-      , status = AllClear
-      , corpus = Nothing
+      , regex = Just Regex.never
+      , corpus = Awaiting
       , matches = []
       }
     , Http.get
-        { url = "https://raw.githubusercontent.com/dwyl/english-words/master/words.txt"
-        , expect = Http.expectString maybeLoadCorpus
+        { url = "https://raw.githubusercontent.com/wsowens/regex-dict/master/words.txt"
+        , expect = Http.expectString CorpusResponse
         }
     )
 
@@ -69,46 +63,51 @@ init _ =
 
 type Msg
     = UpdatePattern String
-    | LoadCorpus String
-    | LoadingError
+    | CorpusResponse (Result Http.Error String)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         UpdatePattern input ->
-            case Regex.fromString input of
-                Just regex ->
-                    let
-                        new_matches =
-                            List.filter (Regex.contains regex) (Maybe.withDefault [] model.corpus)
-                    in
-                    ( { model | pattern = input, regex = regex, status = AllClear, matches = new_matches }
+            let
+                new_model =
+                    { model
+                        | pattern = input
+                        , regex =
+                            if input == "" then
+                                Nothing
+
+                            else
+                                Regex.fromString input
+                    }
+
+                regex =
+                    Maybe.withDefault Regex.never new_model.regex
+            in
+            case model.corpus of
+                Awaiting ->
+                    ( new_model, Cmd.none )
+
+                Failed ->
+                    ( new_model, Cmd.none )
+
+                Loaded corpus ->
+                    ( { new_model | matches = List.filter (Regex.contains regex) corpus }
                     , Cmd.none
                     )
 
-                Nothing ->
-                    ( { model | pattern = input, status = RegexError }, Cmd.none )
+        CorpusResponse result ->
+            case result of
+                Ok rawText ->
+                    ( { model | corpus = Loaded (String.split "\n" rawText) }
+                    , Cmd.none
+                    )
 
-        LoadCorpus rawText ->
-            ( { model | corpus = Just (String.split "\n" rawText) }
-            , Cmd.none
-            )
-
-        LoadingError ->
-            ( { model | status = CorpusLoadError }
-            , Cmd.none
-            )
-
-
-maybeLoadCorpus : Result Http.Error String -> Msg
-maybeLoadCorpus result =
-    case result of
-        Ok string ->
-            LoadCorpus string
-
-        Err _ ->
-            LoadingError
+                Err _ ->
+                    ( { model | corpus = Failed }
+                    , Cmd.none
+                    )
 
 
 
@@ -130,16 +129,25 @@ view model =
     , body =
         [ h1 [] [ text "regex-dict" ]
         , input [ placeholder "regular expression to search", value model.pattern, onInput UpdatePattern ] []
+        , Html.span []
+            [ text
+                (if model.regex == Nothing then
+                    "Error: invalid regex"
+
+                 else
+                    ""
+                )
+            ]
         , div []
-            (case model.status of
-                AllClear ->
+            (case model.corpus of
+                Loaded _ ->
                     [ Html.textarea [] [ text (String.join "\n" model.matches) ] ]
 
-                RegexError ->
-                    [ text "Invalid regex" ]
+                Failed ->
+                    [ text "Corpus failed to load." ]
 
-                CorpusLoadError ->
-                    [ text "can't load corpus" ]
+                Awaiting ->
+                    [ text "Loading corpus" ]
             )
         ]
     }
