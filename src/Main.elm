@@ -4,6 +4,7 @@ import Browser
 import Html exposing (div, h1, input, text)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onInput)
+import Http
 import Regex exposing (Regex)
 
 
@@ -28,14 +29,15 @@ type alias Model =
     { pattern : String
     , regex : Regex
     , status : Status
-    , corpus : List String
+    , corpus : Maybe (List String)
     , matches : List String
     }
 
 
 type Status
-    = Ok
+    = AllClear
     | RegexError
+    | CorpusLoadError
 
 
 
@@ -48,7 +50,17 @@ corpus =
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { pattern = "", regex = Regex.never, status = Ok, corpus = corpus, matches = [] }, Cmd.none )
+    ( { pattern = ""
+      , regex = Regex.never
+      , status = AllClear
+      , corpus = Nothing
+      , matches = []
+      }
+    , Http.get
+        { url = "https://raw.githubusercontent.com/dwyl/english-words/master/words.txt"
+        , expect = Http.expectString maybeLoadCorpus
+        }
+    )
 
 
 
@@ -57,6 +69,8 @@ init _ =
 
 type Msg
     = UpdatePattern String
+    | LoadCorpus String
+    | LoadingError
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -67,14 +81,34 @@ update msg model =
                 Just regex ->
                     let
                         new_matches =
-                            List.filter (Regex.contains regex) corpus
+                            List.filter (Regex.contains regex) (Maybe.withDefault [] model.corpus)
                     in
-                    ( { model | pattern = input, regex = regex, status = Ok, matches = new_matches }
+                    ( { model | pattern = input, regex = regex, status = AllClear, matches = new_matches }
                     , Cmd.none
                     )
 
                 Nothing ->
                     ( { model | pattern = input, status = RegexError }, Cmd.none )
+
+        LoadCorpus rawText ->
+            ( { model | corpus = Just (String.split "\n" rawText) }
+            , Cmd.none
+            )
+
+        LoadingError ->
+            ( { model | status = CorpusLoadError }
+            , Cmd.none
+            )
+
+
+maybeLoadCorpus : Result Http.Error String -> Msg
+maybeLoadCorpus result =
+    case result of
+        Ok string ->
+            LoadCorpus string
+
+        Err _ ->
+            LoadingError
 
 
 
@@ -98,11 +132,14 @@ view model =
         , input [ placeholder "regular expression to search", value model.pattern, onInput UpdatePattern ] []
         , div []
             (case model.status of
-                Ok ->
+                AllClear ->
                     [ Html.textarea [] [ text (String.join "\n" model.matches) ] ]
 
                 RegexError ->
                     [ text "Invalid regex" ]
+
+                CorpusLoadError ->
+                    [ text "can't load corpus" ]
             )
         ]
     }
