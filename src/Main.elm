@@ -1,9 +1,10 @@
 module Main exposing (main)
 
 import Browser
-import Html exposing (h1, input, text)
+import Html exposing (div, h1, input, text)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onInput)
+import Regex exposing (Regex)
 
 
 
@@ -20,22 +21,34 @@ main =
 
 
 
--- PORTS
 -- MODEL
 
 
 type alias Model =
     { pattern : String
+    , regex : Regex
+    , status : Status
+    , corpus : List String
+    , matches : List String
     }
+
+
+type Status
+    = Ok
+    | RegexError
 
 
 
 -- INIT
 
 
+corpus =
+    String.split " " "apple banana cherry durian eggplant fig green-bean"
+
+
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { pattern = "" }, Cmd.none )
+    ( { pattern = "", regex = Regex.never, status = Ok, corpus = corpus, matches = [] }, Cmd.none )
 
 
 
@@ -50,9 +63,18 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         UpdatePattern input ->
-            ( { model | pattern = input }
-            , Cmd.none
-            )
+            case Regex.fromString input of
+                Just regex ->
+                    let
+                        new_matches =
+                            List.filter (Regex.contains regex) corpus
+                    in
+                    ( { model | pattern = input, regex = regex, status = Ok, matches = new_matches }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( { model | pattern = input, status = RegexError }, Cmd.none )
 
 
 
@@ -74,6 +96,13 @@ view model =
     , body =
         [ h1 [] [ text "regex-dict" ]
         , input [ placeholder "regular expression to search", value model.pattern, onInput UpdatePattern ] []
-        , text model.pattern
+        , div []
+            (case model.status of
+                Ok ->
+                    [ Html.textarea [] [ text (String.join "\n" model.matches) ] ]
+
+                RegexError ->
+                    [ text "Invalid regex" ]
+            )
         ]
     }
